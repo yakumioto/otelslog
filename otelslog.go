@@ -228,17 +228,14 @@ func convertAnyValue(key string, value any) attribute.KeyValue {
 	}
 }
 
-func TraceError(traceName, spanName, msg string, args ...any) trace.Span {
-	tracer := otel.Tracer(traceName)
-	ctx := context.Background()
-	_, span := tracer.Start(ctx, spanName)
+func TraceError(traceName, spanName, msg string, args ...any) (context.Context, trace.Span) {
+	ctx, span := otel.Tracer(traceName).Start(context.Background(), spanName)
 	slog.ErrorContext(ctx, msg, args...)
-	return span
+	return ctx, span
 }
 
-func TraceErrorContext(ctx context.Context, traceName, spanName, msg string, args ...any) trace.Span {
-	tracer := otel.Tracer(traceName)
-	ctx, span := tracer.Start(ctx, spanName)
+func TraceErrorContext(ctx context.Context, traceName, spanName, msg string, args ...any) (context.Context, trace.Span) {
+	ctx, span := otel.Tracer(traceName).Start(ctx, spanName)
 	slog.ErrorContext(ctx, msg, args...)
-	return span
+	return ctx, span
 }
