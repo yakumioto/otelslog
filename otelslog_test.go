@@ -6,14 +6,46 @@
 package otelslog
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
+
+func setupTracer() (*tracetest.SpanRecorder, *trace.TracerProvider) {
+	spanRecorder := tracetest.NewSpanRecorder()
+	tracerProvider := trace.NewTracerProvider(trace.WithSpanProcessor(spanRecorder))
+	otel.SetTracerProvider(tracerProvider)
+	return spanRecorder, tracerProvider
+}
+
+func setupLogger() *bytes.Buffer {
+	buf := &bytes.Buffer{}
+	slog.SetDefault(slog.New(NewHandler(slog.NewJSONHandler(buf, nil))))
+	return buf
+}
+
+func TestHandler(t *testing.T) {
+	spanRecorder, _ := setupTracer()
+	buf := setupLogger()
+
+	span := NewSpanAttr("test-trace", "test-span", true)
+	slog.Warn("with out span test")
+	slog.With(span.Attr()...).Warn("test")
+	span.End()
+
+	spans := spanRecorder.Ended()
+	t.Log(spans[0].Events()[0].Attributes)
+
+	t.Log(buf.String())
+}
 
 func TestConvertAttrs(t *testing.T) {
 	tests := []struct {

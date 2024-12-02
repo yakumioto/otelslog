@@ -9,12 +9,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -50,21 +50,15 @@ func WithNoSpanEvents() Options {
 	}
 }
 
-// WithNoSpanBaggage disables including span baggage attributes in slog records.
-func WithNoSpanBaggage() Options {
-	return func(h *Handler) {
-		h.spanBaggage = false
-	}
-}
-
 // NewHandler creates a new slog.Handler with the given options.
-func NewHandler(opts ...Options) *Handler {
+func NewHandler(handler slog.Handler, opts ...Options) *Handler {
 	h := &Handler{
 		traceIDKey:   "trace_id",
 		spanIDKey:    "span_id",
 		spanEventKey: "log",
 		spanEvent:    true,
-		spanBaggage:  true,
+		traceLevel:   slog.LevelInfo,
+		Next:         handler,
 	}
 
 	for _, opt := range opts {
@@ -82,14 +76,13 @@ type Handler struct {
 	traceIDKey string
 	spanIDKey  string
 
+	attrs []slog.Attr
+
 	// Key used to record slog attributes as span events
 	spanEventKey string
 
 	// Controls whether slog attributes should be recorded as span events
 	spanEvent bool
-
-	// Controls whether to record span baggage attributes in slog records
-	spanBaggage bool
 
 	// Controls the level of slog records that will be traced
 	traceLevel slog.Level
@@ -103,54 +96,45 @@ func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
 	return h.Next.Enabled(ctx, level)
 }
 
+func (h *Handler) getSpanWithAttrs(attrs []slog.Attr) *SpanAttr {
+	var span *SpanAttr
+	for i, attr := range attrs {
+		if _, ok := attr.Value.Resolve().Any().(*SpanAttr); ok {
+			span = attr.Value.Resolve().Any().(*SpanAttr)
+			attrs = slices.Delete(attrs, i, 1)
+		}
+	}
+	return span
+}
+
+func (h *Handler) traceWithSpan(ctx context.Context, spanAttr *SpanAttr) context.Context {
+	if spanAttr == nil {
+		return ctx
+	}
+
+	spanCtx, span := otel.Tracer(spanAttr.traceName).Start(ctx, spanAttr.spanName)
+	spanAttr.ctx = spanCtx
+	spanAttr.Span = span
+	return spanCtx
+}
+
 // Handle processes the slog.Record and adds OpenTelemetry attributes and events.
 func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
-	newRecord := record.Clone()
-	tracerWithAttr := func() bool {
-		traced := false
+	attrs := make([]slog.Attr, 0, record.NumAttrs()+len(h.attrs))
+	attrs = append(attrs, h.attrs...)
+	record.Attrs(func(attr slog.Attr) bool {
+		attrs = append(attrs, attr)
+		return true
+	})
 
-		// Keep slog attributes that are not span attributes
-		keepAttrs := make([]slog.Attr, 0, record.NumAttrs())
+	ctx = h.traceWithSpan(ctx, h.getSpanWithAttrs(attrs))
 
-		// Handle span attributes
-		// If the slog record level is greater than or equal to the trace level or spanAttr.Must is true,
-		// start a new span and set the span attributes.
-		record.Attrs(func(attr slog.Attr) bool {
-			spanAttr, ok := attr.Value.Resolve().Any().(*Span)
-			if ok {
-				if spanAttr.Must() && record.Level >= h.traceLevel {
-					ctx, span := otel.Tracer(spanAttr.traceName).Start(ctx, spanAttr.spanName)
-					spanAttr.ctx = ctx
-					spanAttr.Span = span
-				}
-				traced = true
-				return true
-			}
-			keepAttrs = append(keepAttrs, attr)
-			return true
-		})
-
-		newRecord.AddAttrs(keepAttrs...)
-
-		return traced
-	}
-
-	if ctx == nil {
-		if !tracerWithAttr() {
-			return h.Next.Handle(ctx, newRecord)
-		}
-	}
-
-	// Add baggage attributes to the slog record
-	if h.spanBaggage {
-		for _, m := range baggage.FromContext(ctx).Members() {
-			newRecord.AddAttrs(slog.String(m.Key(), m.Value()))
-		}
-	}
+	newRecord := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	newRecord.AddAttrs(attrs...)
 
 	// Get the current span from the context
 	span := trace.SpanFromContext(ctx)
-	if span == nil || !tracerWithAttr() || !span.IsRecording() {
+	if span == nil || !span.IsRecording() {
 		return h.Next.Handle(ctx, newRecord)
 	}
 
@@ -166,6 +150,9 @@ func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
 			return true
 		})
 
+		eventAttrs = append(eventAttrs, attribute.String(slog.MessageKey, newRecord.Message))
+		eventAttrs = append(eventAttrs, attribute.String(slog.LevelKey, newRecord.Level.String()))
+		eventAttrs = append(eventAttrs, attribute.String(slog.TimeKey, newRecord.Time.Format(time.RFC3339)))
 		span.AddEvent(h.spanEventKey, trace.WithAttributes(eventAttrs...))
 	}
 
@@ -191,12 +178,12 @@ func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
 // WithAttrs returns a new slog.Handler that includes the given slog.Attrs.
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &Handler{
+		attrs:        attrs,
 		traceIDKey:   h.traceIDKey,
 		spanIDKey:    h.spanIDKey,
 		spanEventKey: h.spanEventKey,
 		spanEvent:    h.spanEvent,
-		spanBaggage:  h.spanBaggage,
-		Next:         h.Next.WithAttrs(attrs),
+		Next:         h.Next,
 	}
 }
 
@@ -207,7 +194,6 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 		spanIDKey:    h.spanIDKey,
 		spanEventKey: h.spanEventKey,
 		spanEvent:    h.spanEvent,
-		spanBaggage:  h.spanBaggage,
 		Next:         h.Next.WithGroup(name),
 	}
 }
@@ -265,7 +251,7 @@ func convertAnyValue(key string, value any) attribute.KeyValue {
 	}
 }
 
-type Span struct {
+type SpanAttr struct {
 	trace.Span
 	ctx       context.Context
 	traceName string
@@ -273,29 +259,29 @@ type Span struct {
 	must      bool
 }
 
-func NewSpan(traceName, spanName string, mustOpts ...bool) *Span {
+func NewSpanAttr(traceName, spanName string, mustOpts ...bool) *SpanAttr {
 	must := false
 	if len(mustOpts) > 0 {
 		must = mustOpts[0]
 	}
 
-	return &Span{
+	return &SpanAttr{
 		traceName: traceName,
 		spanName:  spanName,
 		must:      must,
 	}
 }
 
-func (sa *Span) End() {
+func (sa *SpanAttr) End() {
 	if sa.Span != nil {
 		sa.Span.End()
 	}
 }
 
-func (sa *Span) Must() bool {
+func (sa *SpanAttr) Must() bool {
 	return sa.must
 }
 
-func (sa *Span) Attr() (string, *Span) {
-	return fmt.Sprintf("%s.%s", sa.traceName, sa.spanName), sa
+func (sa *SpanAttr) Attr() []any {
+	return []any{fmt.Sprintf("%s--%s", sa.traceName, sa.spanName), sa}
 }
