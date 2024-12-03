@@ -1,0 +1,41 @@
+run:
+  timeout: 10m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - cyclop
+    - gosec
+    - revive
+    - goimports
+    - gofmt
+    - unconvert
+    - dupl
+    - goconst
+    - gocyclo
+    - misspell
+    - lll
+    - prealloc
+    - unparam
+    - typecheck
+
+linters-settings:
+  cyclop:
+    max-complexity: 15
+
+issues:
+  exclude-rules:
+    - path: _test.go
+      linters:
+        - gosec
+        - gocyclo
+        - dupl
+        - lll
+  
+
