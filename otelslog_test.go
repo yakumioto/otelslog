@@ -7,6 +7,7 @@ package otelslog
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -65,7 +66,7 @@ func TestHandler(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Warn("with span test", "operation", span, "key1", "value1")
 		assert.Contains(t, buf.String(), `"level":"WARN"`)
 		assert.Contains(t, buf.String(), `"msg":"with span test"`)
@@ -76,14 +77,14 @@ func TestHandler(t *testing.T) {
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
-		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("log.key1", "value1"))
+		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("key1", "value1"))
 	})
 
 	t.Run("with span no events", func(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger(WithNoSpanEvents())
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Info("with span no events test", "operation", span)
 		span.End()
 
@@ -101,7 +102,7 @@ func TestHandler(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.With("operation", span).Info("with span on slog.With", slog.String("key1", "value1"))
 		span.End()
 
@@ -113,33 +114,33 @@ func TestHandler(t *testing.T) {
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
-		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("log.key1", "value1"))
+		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("key1", "value1"))
 	})
 
 	t.Run("with span on slog.WithGroup", func(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Default().WithGroup("group").Info("with span on slog.WithGroup", "operation", span, "key1", "value1")
 		span.End()
 
 		assert.Contains(t, buf.String(), `"level":"INFO"`)
 		assert.Contains(t, buf.String(), `"msg":"with span on slog.WithGroup"`)
-		assert.Contains(t, buf.String(), `"group":{"key1":"value1",`)
+		assert.Contains(t, buf.String(), `"group":{"key1":"value1",`, buf.String())
 
 		spans := spanRecorder.Ended()
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
-		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("group.log.key1", "value1"))
+		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("group.key1", "value1"))
 	})
 
 	t.Run("with span on slog.WithGroup nested", func(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Default().WithGroup("group1").WithGroup("group2").Info("with span on slog.WithGroup nested", "operation", span, "key1", "value1")
 		span.End()
 
@@ -151,14 +152,14 @@ func TestHandler(t *testing.T) {
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
-		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("group1.group2.log.key1", "value1"))
+		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("group1.group2.key1", "value1"))
 	})
 
 	t.Run("with span on slog.Group", func(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Default().Info("with span on slog.Group", "operation", span, slog.Group("group", slog.String("key1", "value1")))
 		span.End()
 
@@ -170,14 +171,14 @@ func TestHandler(t *testing.T) {
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
-		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("log.group.key1", "value1"))
+		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("group.key1", "value1"))
 	})
 
 	t.Run("with span on slog.Group nested", func(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Default().Info("with span on slog.Group nested", "operation", span, slog.Group("group1", slog.Group("group2", slog.String("key1", "value1"))))
 		span.End()
 
@@ -189,18 +190,18 @@ func TestHandler(t *testing.T) {
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
-		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("log.group1.group2.key1", "value1"))
+		assert.Contains(t, spans[0].Events()[0].Attributes, attribute.String("group1.group2.key1", "value1"))
 	})
 
 	t.Run("with span nested", func(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger()
 
-		span1 := NewSpan("span1")
+		span1 := NewSpanContext("span1", "trace")
 		slog.Info("with span nested", "operation1", span1, "key1", "value1")
 
-		span2 := NewSpan("span2")
-		slog.ErrorContext(span1.Context(), "with span nested", "operation2", span2, slog.String("key2", "value2"))
+		span2 := NewSpanContextWithContext(span1, "span2", "trace")
+		slog.ErrorContext(span1, "with span nested", "operation2", span2, slog.String("key2", "value2"))
 
 		span2.End()
 		span1.End()
@@ -220,7 +221,7 @@ func TestHandler(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger(WithTraceLevel(slog.LevelWarn))
 
-		span := NewSpan("span")
+		span := NewSpanContext("span", "trace")
 		slog.Info("with no span on slog.Info", "operation", span, "key1", "value1")
 		span.End()
 
@@ -237,7 +238,7 @@ func TestHandler(t *testing.T) {
 		spanRecorder := setupTracer()
 		buf := setupLogger(WithTraceLevel(slog.LevelWarn))
 
-		span := NewMustSpan("span")
+		span := NewMustSpanContext("span", "trace")
 		slog.Info("with must span", "operation", span, "key1", "value1")
 		span.End()
 
@@ -255,7 +256,7 @@ func TestHandler(t *testing.T) {
 		spanRecorder := setupTracer()
 		slog.SetDefault(slog.New(NewHandler(nil)))
 
-		span := NewMustSpan("span")
+		span := NewMustSpanContext("span", "trace")
 		slog.Info("with nil next handler", "operation", span, "key1", "value1")
 		span.End()
 
@@ -263,6 +264,59 @@ func TestHandler(t *testing.T) {
 
 		assert.Equal(t, 1, len(spans))
 		assert.Equal(t, "span", spans[0].Name())
+	})
+
+	t.Run("with span in context", func(t *testing.T) {
+		spanRecorder := setupTracer()
+		buf := setupLogger()
+
+		spanCtx := NewSpanContext("span", "trace")
+		slog.InfoContext(spanCtx, "with span in context")
+		spanCtx.Done()
+
+		assert.Contains(t, buf.String(), `"level":"INFO"`)
+		assert.Contains(t, buf.String(), `"msg":"with span in context"`)
+
+		spans := spanRecorder.Ended()
+
+		assert.Equal(t, 1, len(spans))
+		assert.Equal(t, "span", spans[0].Name())
+	})
+
+	t.Run("with span in context and no context", func(t *testing.T) {
+		spanRecorder := setupTracer()
+		buf := setupLogger()
+
+		spanCtx := NewSpanContextWithContext(context.Background(), "span", "trace")
+		slog.InfoContext(spanCtx, "with span in context and no context")
+		spanCtx.Done()
+
+		assert.Contains(t, buf.String(), `"level":"INFO"`)
+		assert.Contains(t, buf.String(), `"msg":"with span in context and no context"`)
+
+		spans := spanRecorder.Ended()
+
+		assert.Equal(t, 1, len(spans))
+		assert.Equal(t, "span", spans[0].Name())
+	})
+
+	t.Run("with span in context nested", func(t *testing.T) {
+		spanRecorder := setupTracer()
+		_ = setupLogger()
+
+		span1Ctx := NewSpanContext("span1", "trace")
+		slog.InfoContext(span1Ctx, "with span1 in context nested")
+
+		span2Ctx := NewMustSpanContextWithContext(span1Ctx, "span2", "trace")
+		slog.ErrorContext(span2Ctx, "with span2 in context nested")
+
+		span2Ctx.Done()
+		span1Ctx.Done()
+
+		spans := spanRecorder.Ended()
+
+		assert.Equal(t, 2, len(spans))
+		assert.Equal(t, spans[0].SpanContext().TraceID(), spans[1].SpanContext().TraceID())
 	})
 }
 

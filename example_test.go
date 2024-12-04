@@ -1,7 +1,7 @@
-/*
- * Copyright (c) 2024 yakumioto <yaku.mioto@gmail.com>
- * All rights reserved.
- */
+// /*
+//  * Copyright (c) 2024 yakumioto <yaku.mioto@gmail.com>
+//  * All rights reserved.
+//  */
 
 package otelslog_test
 
@@ -12,7 +12,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -25,9 +25,9 @@ func initTracer(ctx context.Context) (func(), error) {
 	// Create OTLP exporter
 	exporter, err := otlptrace.New(
 		ctx,
-		otlptracehttp.NewClient(
-			otlptracehttp.WithEndpoint("localhost:4317"), // Your collector endpoint
-			otlptracehttp.WithInsecure(),                 // For testing only
+		otlptracegrpc.NewClient(
+			otlptracegrpc.WithEndpoint("127.0.0.1:4317"), // Your collector endpoint
+			otlptracegrpc.WithInsecure(),                 // For testing only
 		),
 	)
 	if err != nil {
@@ -79,7 +79,6 @@ func ExampleNewHandler() {
 			otelslog.WithTraceLevel(slog.LevelDebug),
 		),
 	))
-	slog.Info("hello, world")
 
 	// Initialize the tracer.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,10 +89,40 @@ func ExampleNewHandler() {
 	}
 	defer cleanup()
 
-	span := otelslog.NewSpan("span-name")
-	slog.Info("processing request",
-		"operation-name", span,
-		"user_id", "id",
+	// no trace log
+	slog.Info("hello, world")
+
+	// trace with slog attributes
+	span1 := otelslog.NewSpanContextWithContext(ctx, "", "span1")
+	slog.Info("processing request1",
+		"trace1", span1,
+		"key", "1",
+		slog.Group("group1",
+			slog.String("key1", "value1"),
+			slog.String("key2", "value2"),
+		),
 	)
-	defer span.End()
+	defer span1.End()
+
+	// trace with slog.XXXContext
+	span2Ctx := otelslog.NewSpanContextWithContext(span1, "trace2", "span2")
+	slog.InfoContext(span2Ctx, "processing request2",
+		"key", "1",
+		slog.Group("group2",
+			slog.String("key1", "value1"),
+			slog.String("key2", "value2"),
+		),
+	)
+	defer span2Ctx.Done()
+
+	// trace with slog.With
+	span3Ctx := otelslog.NewSpanContextWithContext(span2Ctx, "trace3", "span3")
+	slog.Default().WithGroup("group3").With("trace3", span3Ctx).Error("processing request3",
+		"key", "1",
+		slog.Group("group4",
+			slog.String("key1", "value1"),
+			slog.String("key2", "value2"),
+		),
+	)
+	defer span3Ctx.End()
 }

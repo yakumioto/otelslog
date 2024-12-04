@@ -1,145 +1,227 @@
 # otelslog
 
+[![CI Status](https://github.com/yakumioto/otelslog/actions/workflows/main.yaml/badge.svg)](https://github.com/yakumioto/otelslog/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yakumioto/otelslog)](https://goreportcard.com/report/github.com/yakumioto/otelslog)
 [![codecov](https://codecov.io/github/yakumioto/otelslog/graph/badge.svg?token=6ODsohX0G6)](https://codecov.io/github/yakumioto/otelslog)
 [![codebeat badge](https://codebeat.co/badges/dd9f3cd1-265a-4de0-be8a-0d6fcf690220)](https://codebeat.co/projects/github-com-yakumioto-otelslog-main)
 [![GoDoc](https://pkg.go.dev/badge/github.com/yakumioto/otelslog)](https://pkg.go.dev/github.com/yakumioto/otelslog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Release](https://img.shields.io/github/v/release/yakumioto/otelslog.svg)](https://github.com/yakumioto/otelslog/releases)
 
-otelslog 是一个将 Go 的结构化日志（slog）与 OpenTelemetry 分布式追踪无缝集成的 Go 包。通过桥接这两个重要的可观测性工具，otelslog 使得日志和分布式追踪的关联变得更加简单，从而能够更深入地洞察应用程序的行为和性能。
+otelslog 是一个无缝集成结构化日志（slog）和 OpenTelemetry 分布式追踪的 Go 语言工具包。它通过自动关联日志与分布式追踪数据来丰富您的可观测性技术栈，提供应用行为的深度洞察。该工具包在保持 slog 简洁性的同时，增添了强大的追踪能力，帮助您理解分布式系统中的操作流程。
 
-## 特性
+[English Version](README.md)
 
-otelslog 通过以下特性增强了应用程序的可观测性：
+## 核心特性
 
-- 自动注入 trace ID 和 span ID，实现日志与追踪的关联
-- 基于日志级别的灵活 span 创建机制
-- 支持必要时强制创建 span，不受日志级别限制
-- 完整支持日志和追踪中的嵌套属性分组
-- 通过函数选项实现灵活配置
-- 支持并发安全操作
+otelslog 通过以下强大特性增强应用的可观测性：
+
+* 自动追踪上下文集成
+  * 无缝注入追踪 ID 和 Span ID 到日志记录
+  * 内置跨服务边界的上下文传播
+  * 支持具有完整父子关系的嵌套 Span
+
+* 灵活配置
+  * 可自定义追踪 ID 和 Span ID 的字段名
+  * 可配置创建追踪的最低日志级别
+  * 可选的 Span 事件记录
+  * 支持绕过日志级别过滤的强制 Span
+
+* 丰富的结构化数据支持
+  * 完整支持日志和追踪中的嵌套属性分组
+  * slog 和 OpenTelemetry 格式之间的类型感知属性转换
+  * 在分布式追踪中保留属性层次结构
+
+* 卓越的运维特性
+  * 线程安全设计，支持并发使用
+  * 内存高效的属性处理
 
 ## 安装
 
-使用 Go modules 将 otelslog 添加到你的项目中：
+使用 Go modules 添加 otelslog 到您的项目：
 
 ```bash
 go get github.com/yakumioto/otelslog
 ```
 
-## 快速开始
+## 快速入门
 
-以下是 otelslog 的基本使用示例：
+以下是使用 otelslog 的最小示例：
 
 ```go
 package main
 
 import (
+    "context"
     "log/slog"
     "os"
     
     "github.com/yakumioto/otelslog"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func main() {
-    // 初始化你的追踪器
+    // 初始化基础追踪器用于演示
+    tp := trace.NewTracerProvider()
+    otel.SetTracerProvider(tp)
+    defer tp.Shutdown(context.Background())
     
     // 使用 otelslog handler 设置默认日志记录器
     slog.SetDefault(slog.New(
         otelslog.NewHandler(slog.NewJSONHandler(os.Stdout, nil)),
     ))
 
-    // 创建 span 并记录日志
-    span := otelslog.NewSpan("process-request")
-    slog.Info("handling request", 
+    // 创建 span 并包含在日志中
+    span := otelslog.NewSpanContext("service", "process-request")
+    slog.Info("处理请求", 
         "operation", span,
-        "user_id", "123",
+        slog.Group("user",
+            slog.String("id", "123"),
+            slog.String("role", "admin"),
+        ),
     )
     defer span.End()
 }
 ```
 
-## 进阶用法
+## 高级用法
 
-### 自定义配置
+### Handler 配置
 
-你可以使用函数选项自定义 handler 的行为：
+使用函数选项自定义 handler 行为：
 
 ```go
-handler := otelslog.NewHandler(
-    slog.NewJSONHandler(os.Stdout, nil),
-    otelslog.WithTraceIDKey("trace_id"),     // 自定义 trace ID 的键名
-    otelslog.WithSpanIDKey("span_id"),       // 自定义 span ID 的键名
-    otelslog.WithTraceLevel(slog.LevelDebug),// 设置追踪级别
-    otelslog.WithNoSpanEvents(),             // 禁用 span 事件记录
-)
+slog.SetDefault(slog.New(
+    otelslog.NewHandler(
+        slog.NewJSONHandler(os.Stdout, nil),
+        otelslog.WithTraceIDKey("trace_id"),     // 自定义追踪 ID 字段
+        otelslog.WithSpanIDKey("span_id"),       // 自定义 Span ID 字段
+        otelslog.WithTraceLevel(slog.LevelDebug), // 设置最低追踪级别
+        otelslog.WithNoSpanEvents(),             // 禁用 Span 事件
+    ),
+))
 ```
 
-### 使用分组功能
+### 上下文传播与嵌套 Span
 
-otelslog 完整支持 slog 的分组功能：
+通过proper上下文传播跟踪应用程序中的操作：
 
 ```go
-span := otelslog.NewSpan("process-request")
-slog.WithGroup("request").Info("handling request",
+// 创建根 Span
+span1 := otelslog.NewSpanContext("service", "parent-operation")
+slog.Info("启动父操作", 
+    "operation", span1,
+    "request_id", "req-123",
+)
+
+// 使用上下文创建子 Span
+span2Ctx := otelslog.NewSpanContextWithContext(span1, "service", "child-operation")
+slog.InfoContext(span2Ctx, "处理子操作",
+    slog.Group("metrics",
+        slog.Int("items_processed", 42),
+        slog.Duration("processing_time", time.Second),
+    ),
+)
+
+defer span2Ctx.Done()
+defer span1.End()
+```
+
+### 强制 Span 与关键操作
+
+确保关键操作始终被追踪，无视日志级别：
+
+```go
+span := otelslog.NewMustSpanContext("service", "critical-operation")
+slog.Info("处理关键请求",
     "operation", span,
-    slog.Group("user",
-        slog.String("id", userID),
-        slog.String("role", userRole),
+    slog.Group("transaction",
+        slog.String("id", "tx-789"),
+        slog.Float64("amount", 1299.99),
     ),
 )
 defer span.End()
 ```
 
-### 强制创建 Span
+### 使用结构化数据
 
-对于必须追踪的关键操作，可以使用强制创建的 span：
+使用 slog 的强大分组功能组织日志数据：
 
 ```go
-span := otelslog.NewMustSpan("critical-operation")
-slog.Info("processing important request",
+span := otelslog.NewSpanContext("service", "user-management")
+slog.Default().WithGroup("request").Info("更新用户配置",
     "operation", span,
-    "user_id", userID,
+    slog.Group("user",
+        slog.String("id", "user-456"),
+        slog.Group("changes",
+            slog.String("email", "new@example.com"),
+            slog.String("role", "admin"),
+        ),
+    ),
 )
 defer span.End()
 ```
 
-### 嵌套 Span
+## OpenTelemetry 集成
 
-otelslog 支持创建嵌套 span 来追踪子操作：
+设置完整的追踪管道与 OTLP 导出：
 
 ```go
-span1 := otelslog.NewSpan("parent-operation")
-slog.Info("starting parent operation", "operation", span1)
+func initTracer(ctx context.Context) (func(), error) {
+    exporter, err := otlptrace.New(
+        ctx,
+        otlptracegrpc.NewClient(
+            otlptracegrpc.WithEndpoint("localhost:4317"),
+            otlptracegrpc.WithInsecure(),
+        ),
+    )
+    if err != nil {
+        return nil, err
+    }
 
-span2 := otelslog.NewSpan("child-operation")
-slog.InfoContext(span1.Context(), "performing sub-operation", "operation", span2)
+    tp := sdktrace.NewTracerProvider(
+        sdktrace.WithBatcher(exporter),
+        sdktrace.WithResource(resource.NewWithAttributes(
+            semconv.ServiceName("your-service"),
+            semconv.ServiceVersion("1.0.0"),
+        )),
+        sdktrace.WithSampler(sdktrace.AlwaysSample()),
+    )
+    otel.SetTracerProvider(tp)
 
-defer span2.End()
-defer span1.End()
+    return func() { tp.Shutdown(ctx) }, nil
+}
 ```
 
 ## 最佳实践
 
-为了更好地使用 otelslog，建议遵循以下最佳实践：
+为了在您的应用中最大化 otelslog 的效益：
 
-1. 使用有意义的 span 名称，清晰描述操作的目的
-2. 在创建 span 后立即使用 `defer span.End()` 确保正确清理
-3. 合理配置追踪级别，在可观测性和性能之间取得平衡
-4. 使用分组功能组织日志和追踪中的相关属性
-5. 对关键操作使用 `NewMustSpan` 确保始终被追踪
-6. 在服务边界间正确传播 span 上下文
+* 设计 Span 以反映应用的逻辑操作。选择能清晰描述正在执行的操作的 Span 名称，使追踪更易理解和分析。
 
-让我帮您将这些章节翻译成专业的中文版本，同时保持技术准确性和专业性：
+* 使用分组创建一致的属性层次结构。将相关属性组织在一起，以在日志和追踪中保持清晰性，使跨可观测性工具的信息关联更容易。
+
+* 有效使用上下文传播。始终通过应用的调用链传递上下文，以维持 Span 之间适当的父子关系，确保准确的分布式追踪。
+
+* 考虑性能影响。在高吞吐量场景中，配置适当的追踪级别并在不需要 Span 事件时使用 WithNoSpanEvents 来优化性能。
+
+* 正确处理 Span 生命周期。在创建 Span 后立即使用 defer 调用 span.End()，以确保正确清理和准确的持续时间测量。
+
+* 谨慎使用强制 Span。对于必须追踪的操作使用 NewMustSpanContext，但要注意额外开销。
 
 ## 致谢
 
-本项目灵感源自 [slog-otel](https://github.com/remychantenay/slog-otel)。我们由衷感谢该项目的创作者和贡献者在结合结构化日志与 OpenTelemetry 追踪领域所做出的开创性工作。
+本项目受 [slog-otel](https://github.com/remychantenay/slog-otel) 启发。我们感谢其创建者和贡献者在结合结构化日志与 OpenTelemetry 方面的开创性工作。
 
 ## 相关项目
 
-如果您对结构化日志记录和 OpenTelemetry 的集成感兴趣，以下项目可能对您有所帮助：
+探索这些相关项目以增强您的可观测性技术栈：
 
-- [slog-otel](https://github.com/remychantenay/slog-otel) - 为 slog 引入 OpenTelemetry 能力的处理实现
-- [slog](https://pkg.go.dev/log/slog@go1.23.3) - Go 语言官方提供的结构化日志记录包
-- [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go) - OpenTelemetry 官方提供的 Go 语言 SDK 实现
+* [slog-otel](https://github.com/remychantenay/slog-otel) - 另一种将 OpenTelemetry 引入 slog 的方法
+* [slog](https://pkg.go.dev/log/slog) - Go 的官方结构化日志包
+* [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go) - OpenTelemetry 的官方 Go SDK
+
+## 许可证
+
+本项目采用 Apache License 2.0 许可证 - 查看 [LICENSE](LICENSE) 文件了解详情。

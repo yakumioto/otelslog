@@ -1,25 +1,40 @@
 # otelslog
 
+[![CI Status](https://github.com/yakumioto/otelslog/actions/workflows/main.yaml/badge.svg)](https://github.com/yakumioto/otelslog/actions/workflows/go.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/yakumioto/otelslog)](https://goreportcard.com/report/github.com/yakumioto/otelslog)
 [![codecov](https://codecov.io/github/yakumioto/otelslog/graph/badge.svg?token=6ODsohX0G6)](https://codecov.io/github/yakumioto/otelslog)
 [![codebeat badge](https://codebeat.co/badges/dd9f3cd1-265a-4de0-be8a-0d6fcf690220)](https://codebeat.co/projects/github-com-yakumioto-otelslog-main)
 [![GoDoc](https://pkg.go.dev/badge/github.com/yakumioto/otelslog)](https://pkg.go.dev/github.com/yakumioto/otelslog)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Release](https://img.shields.io/github/v/release/yakumioto/otelslog.svg)](https://github.com/yakumioto/otelslog/releases)
 
-otelslog is a Go package that seamlessly integrates structured logging (slog) with OpenTelemetry tracing. By bridging these two essential observability tools, otelslog makes it easier to correlate logs with distributed traces, providing deeper insights into your application's behavior and performance.
+otelslog is a Go package that seamlessly integrates structured logging (slog) with OpenTelemetry tracing. It enriches your observability stack by automatically correlating logs with distributed traces, providing deep insights into your application's behavior. The package maintains the simplicity of slog while adding powerful tracing capabilities that help you understand the flow of operations across your distributed system.
 
 [中文版](README_zhCN.md)
 
-## Features
+## Key Features
 
-otelslog enhances your application's observability by providing:
+otelslog enhances your application's observability through several powerful features:
 
-- Automatic correlation between logs and traces through trace and span ID injection
-- Flexible span creation based on log levels
-- Support for mandatory spans that are always created regardless of log level
-- Rich support for nested attribute groups in both logs and traces
-- Customizable configuration through functional options
-- Thread-safe operation for concurrent use
+* Automatic Trace Context Integration
+  * Seamless injection of trace and span IDs into log records
+  * Built-in context propagation across service boundaries
+  * Support for nested spans with proper parent-child relationships
+
+* Flexible Configuration
+  * Customizable field names for trace and span IDs
+  * Configurable minimum log level for trace creation
+  * Optional span event recording
+  * Support for mandatory spans that bypass log level filtering
+
+* Rich Structured Data Support
+  * Complete support for nested attribute groups in both logs and traces
+  * Type-aware attribute conversion between slog and OpenTelemetry formats
+  * Preservation of attribute hierarchies in distributed traces
+
+* Operational Excellence
+  * Thread-safe design for concurrent use
+  * Memory-efficient attribute handling
 
 ## Installation
 
@@ -31,31 +46,40 @@ go get github.com/yakumioto/otelslog
 
 ## Quick Start
 
-Here's how to get started with otelslog:
+Here's a minimal example to get you started with otelslog:
 
 ```go
 package main
 
 import (
+    "context"
     "log/slog"
     "os"
     
     "github.com/yakumioto/otelslog"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func main() {
-    // Initialize your tracer
+    // Initialize a basic tracer for demonstration
+    tp := trace.NewTracerProvider()
+    otel.SetTracerProvider(tp)
+    defer tp.Shutdown(context.Background())
     
     // Set up the default logger with otelslog handler
     slog.SetDefault(slog.New(
         otelslog.NewHandler(slog.NewJSONHandler(os.Stdout, nil)),
     ))
 
-    // Create a span and log with it
-    span := otelslog.NewSpan("process-request")
+    // Create a span and include it in logging
+    span := otelslog.NewSpanContext("service", "process-request")
     slog.Info("handling request", 
         "operation", span,
-        "user_id", "123",
+        slog.Group("user",
+            slog.String("id", "123"),
+            slog.String("role", "admin"),
+        ),
     )
     defer span.End()
 }
@@ -63,83 +87,141 @@ func main() {
 
 ## Advanced Usage
 
-### Custom Configuration
+### Configuring the Handler
 
-You can customize the handler's behavior using functional options:
+Customize the handler's behavior using functional options:
 
 ```go
-handler := otelslog.NewHandler(
-    slog.NewJSONHandler(os.Stdout, nil),
-    otelslog.WithTraceIDKey("trace_id"),
-    otelslog.WithSpanIDKey("span_id"),
-    otelslog.WithTraceLevel(slog.LevelDebug),
-    otelslog.WithNoSpanEvents(),
-)
+slog.SetDefault(slog.New(
+    otelslog.NewHandler(
+        slog.NewJSONHandler(os.Stdout, nil),
+        otelslog.WithTraceIDKey("trace_id"),     // Custom trace ID field
+        otelslog.WithSpanIDKey("span_id"),       // Custom span ID field
+        otelslog.WithTraceLevel(slog.LevelDebug), // Set minimum trace level
+        otelslog.WithNoSpanEvents(),             // Disable span events
+    ),
+))
 ```
 
-### Working with Groups
+### Context Propagation and Nested Spans
 
-otelslog fully supports slog's grouping functionality:
+Track operations across your application with proper context propagation:
 
 ```go
-span := otelslog.NewSpan("process-request")
-slog.WithGroup("request").Info("handling request",
+// Create a root span
+span1 := otelslog.NewSpanContext("service", "parent-operation")
+slog.Info("starting parent operation", 
+    "operation", span1,
+    "request_id", "req-123",
+)
+
+// Create a child span with context
+span2Ctx := otelslog.NewSpanContextWithContext(span1, "service", "child-operation")
+slog.InfoContext(span2Ctx, "processing sub-operation",
+    slog.Group("metrics",
+        slog.Int("items_processed", 42),
+        slog.Duration("processing_time", time.Second),
+    ),
+)
+
+defer span2Ctx.Done()
+defer span1.End()
+```
+
+### Mandatory Spans and Critical Operations
+
+Ensure critical operations are always traced regardless of log level:
+
+```go
+span := otelslog.NewMustSpanContext("service", "critical-operation")
+slog.Info("processing critical request",
     "operation", span,
-    slog.Group("user",
-        slog.String("id", userID),
-        slog.String("role", userRole),
+    slog.Group("transaction",
+        slog.String("id", "tx-789"),
+        slog.Float64("amount", 1299.99),
     ),
 )
 defer span.End()
 ```
 
-### Mandatory Spans
+### Working with Structured Data
 
-For critical operations that should always be traced:
+Organize your logging data using slog's powerful grouping features:
 
 ```go
-span := otelslog.NewMustSpan("critical-operation")
-slog.Info("processing important request",
+span := otelslog.NewSpanContext("service", "user-management")
+slog.Default().WithGroup("request").Info("updating user profile",
     "operation", span,
-    "user_id", userID,
+    slog.Group("user",
+        slog.String("id", "user-456"),
+        slog.Group("changes",
+            slog.String("email", "new@example.com"),
+            slog.String("role", "admin"),
+        ),
+    ),
 )
 defer span.End()
 ```
 
-### Nested Spans
+## Integration with OpenTelemetry
 
-otelslog supports creating nested spans for tracking sub-operations:
+Set up a complete tracing pipeline with OTLP export:
 
 ```go
-span1 := otelslog.NewSpan("parent-operation")
-slog.Info("starting parent operation", "operation", span1)
+func initTracer(ctx context.Context) (func(), error) {
+    exporter, err := otlptrace.New(
+        ctx,
+        otlptracegrpc.NewClient(
+            otlptracegrpc.WithEndpoint("localhost:4317"),
+            otlptracegrpc.WithInsecure(),
+        ),
+    )
+    if err != nil {
+        return nil, err
+    }
 
-span2 := otelslog.NewSpan("child-operation")
-slog.InfoContext(span1.Context(), "performing sub-operation", "operation", span2)
+    tp := sdktrace.NewTracerProvider(
+        sdktrace.WithBatcher(exporter),
+        sdktrace.WithResource(resource.NewWithAttributes(
+            semconv.ServiceName("your-service"),
+            semconv.ServiceVersion("1.0.0"),
+        )),
+        sdktrace.WithSampler(sdktrace.AlwaysSample()),
+    )
+    otel.SetTracerProvider(tp)
 
-defer span2.End()
-defer span1.End()
+    return func() { tp.Shutdown(ctx) }, nil
+}
 ```
 
 ## Best Practices
 
-To get the most out of otelslog:
+To maximize the benefits of otelslog in your application:
 
-1. Always use meaningful span names that clearly describe the operation
-2. Use `defer span.End()` immediately after span creation to ensure proper cleanup
-3. Configure appropriate trace levels to balance visibility with performance
-4. Use groups to organize related attributes in both logs and traces
-5. Consider using `NewMustSpan` for critical operations that should always be traced
-6. Leverage span context propagation for tracking request flows across service boundaries
+* Design spans to reflect your application's logical operations. Choose span names that clearly describe what operation is being performed, making traces easier to understand and analyze.
+
+* Create a consistent attribute hierarchy using groups. Organize related attributes together to maintain clarity in both logs and traces, making it easier to correlate information across your observability tools.
+
+* Use context propagation effectively. Always pass context through your application's call chain to maintain proper parent-child relationships between spans and ensure accurate distributed tracing.
+
+* Consider performance implications. Configure appropriate trace levels and use WithNoSpanEvents when span events aren't needed to optimize performance in high-throughput scenarios.
+
+* Handle span lifecycle properly. Always use defer for span.End() calls immediately after span creation to ensure proper cleanup and accurate duration measurements.
+
+* Leverage mandatory spans judiciously. Use NewMustSpanContext for operations that must be traced regardless of log level, but be mindful of the additional overhead.
 
 ## Acknowledgements
 
-This project was inspired by [slog-otel](https://github.com/remychantenay/slog-otel). We would like to thank its creators and contributors for their innovative work in combining structured logging with OpenTelemetry.
+This project was inspired by [slog-otel](https://github.com/remychantenay/slog-otel). We extend our gratitude to its creators and contributors for their pioneering work in combining structured logging with OpenTelemetry.
 
 ## Related Projects
 
-If you're interested in structured logging and OpenTelemetry integration, you might also find these projects useful:
+Explore these related projects to enhance your observability stack:
 
-- [slog-otel](https://github.com/remychantenay/slog-otel) - A handler bringing OpenTelemetry to slog
-- [slog](https://pkg.go.dev/log/slog@go1.23.3) - The official structured logging package for Go
-- [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go) - The official OpenTelemetry SDK for Go
+* [slog-otel](https://github.com/remychantenay/slog-otel) - Another approach to bringing OpenTelemetry to slog
+* [slog](https://pkg.go.dev/log/slog) - Go's official structured logging package
+* [OpenTelemetry Go](https://github.com/open-telemetry/opentelemetry-go) - The official OpenTelemetry SDK for Go
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
