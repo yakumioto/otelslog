@@ -194,6 +194,21 @@ func initTracer(ctx context.Context) (func(), error) {
 }
 ```
 
+## Benchmark
+
+```
+goos: darwin
+goarch: amd64
+pkg: github.com/yakumioto/otelslog
+cpu: Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+BenchmarkTextSlog-12                   	  255117	      4781 ns/op	    4260 B/op	       7 allocs/op
+BenchmarkJSONSlog-12                   	  346534	      3367 ns/op	    4157 B/op	       7 allocs/op
+BenchmarkJSONOtelSlogWithAttr-12       	  238906	      5670 ns/op	    5489 B/op	      20 allocs/op
+BenchmarkTextOtelSlogWithAttr-12       	  245080	      4871 ns/op	    5342 B/op	      20 allocs/op
+BenchmarkJSONOtelSlogWithContext-12    	  275746	      4189 ns/op	    5021 B/op	      18 allocs/op
+BenchmarkTextOtelSlogWithContext-12    	  271627	      4346 ns/op	    5001 B/op	      19 allocs/op
+```
+
 ## Best Practices
 
 To maximize the benefits of otelslog in your application:

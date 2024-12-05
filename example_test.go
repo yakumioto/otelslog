@@ -6,13 +6,14 @@
 package otelslog_test
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
@@ -23,16 +24,26 @@ import (
 // initTracer initializes an OTLP exporter, and configures the corresponding trace provider.
 func initTracer(ctx context.Context) (func(), error) {
 	// Create OTLP exporter
-	exporter, err := otlptrace.New(
-		ctx,
-		otlptracegrpc.NewClient(
-			otlptracegrpc.WithEndpoint("127.0.0.1:4317"), // Your collector endpoint
-			otlptracegrpc.WithInsecure(),                 // For testing only
-		),
+
+	// example with stdouttrace on buffer
+	buf := bytes.NewBuffer(nil)
+	exporter, err := stdouttrace.New(
+		stdouttrace.WithWriter(buf),
 	)
 	if err != nil {
 		return nil, err
 	}
+
+	// exporter, err := otlptrace.New(
+	// 	ctx,
+	// 	otlptracegrpc.NewClient(
+	// 		otlptracegrpc.WithEndpoint("127.0.0.1:4317"), // Your collector endpoint
+	// 		otlptracegrpc.WithInsecure(),                 // For testing only
+	// 	),
+	// )
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	// Create resource with service information
 	res, err := resource.New(ctx,
@@ -60,6 +71,10 @@ func initTracer(ctx context.Context) (func(), error) {
 		if err := tp.Shutdown(ctx); err != nil {
 			slog.Error("Error shutting down tracer provider", "error", err)
 		}
+
+		// example with stdouttrace on buffer
+		fmt.Println("------- Trace span log -------")
+		fmt.Println(buf.String())
 	}, nil
 }
 
